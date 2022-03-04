@@ -1,0 +1,784 @@
+---
+title: "Case Study 2"
+subtitle: |
+  | Clustering with a Real Time Location System
+  | DS7333
+author: "Jason Rupp"
+date: "January 21, 2021"
+output:
+  rmarkdown::html_document:
+    theme: lumen
+    toc: true
+    number_sections: true
+    toc_float:
+      collapsed: true
+---
+
+```{css, echo=FALSE}
+p.caption {
+  font-size: 0.8em;
+}
+```
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning = FALSE)
+library(tidyverse)
+library(rmarkdown)
+library(knitr)
+library(kableExtra)
+library(gridExtra)
+source("cs2_scripts_rd.R")
+```
+
+
+# Introduction
+
+Asset tracking and management play a vital role in business, regardless of the domain. The tracking of inventory or equipment can be accomplished in a myriad of ways and can be a simple spreadsheet that is manually updated. However, more technologically advanced and elegant solutions can be managed by information technology teams. The use of automated Real Time Location Systems, or RTLS, leverage computer systems to track items at any given time. There are many RTLS configurations which can be utilized to track assets, but generally speaking the elemental pieces of RTLS break down into readers and tags. The tag(s) are typically attached to the asset(s), and the reader(s) will collect and/or transmit information in some manner, through RFID, Bluetooth, IR, etc. 
+
+Readers or tags can be fixed, or mobile, and these readers and tags can be active, passive or both. An active reader or tag would need to perform some type of action, and almost certainly would require some type of power source, where as passive items would not require any action or intervention. 
+
+A very simple example would be theft deterrent systems employed in stores. Anti-theft devices placed on inventory function as passive, typically mobile, tags and the alarms placed at the exit points of the store would be fixed active readers. If any tagged inventory is moved to an unauthorized location, the active reader alarms will alert the staff. A more advanced means of RTLS which can be employed is with the use of assets connected to a WIFI network within a building, one such RTLS provides the inspiration for this case study.
+
+This study will evaluate a Real Time Location System that uses the signal strengths of WIFI routers placed throughout a building to identify the position of a theoretical asset that would be connected to the network. The position of the routers are known but the position of connected nearby devices are unknown. The goal of this case study is to generate the most accurate prediction of that unknown position of a theoretical asset given signal strengths using a nearest neighbors type approach.
+
+
+# Background
+
+## Case Study Purpose
+
+This case study is a re-evaluation and extension of an exercise covered in the first chapter of "Data Science in R: A Case Studies Approach to Computational Reasoning and Problem Solving" titled *Predicting Location via Indoor Positioning Systems*. The exercise evaluates an RTLS that will use the signal strengths from routers to predict the position of an asset on the floor of a building using a dataset collected by researchers at the University of Mannheim. A more detailed explanation of the study can be found in the textbook however the basic design will be synopsized. 
+
+![**Figure 2.1** from Nolan, Lang. pg 5  *Showing access points as black squares, collection points for offline/training data as grey dots, and online/testing set recordings as black dots.*](Fig1-1.PNG)
+
+WIFI routers were placed at access points in a building, and a mobile hand-held reader was used to measure the signal from these routers at fixed locations. Figure 2.1 shows the floor plan and shows an example of some of the locations for the routers, denoted by the *black squares*. A 1 meter grid was measured and the locations were denoted with $(x,y)$ coordinates as though looking down at the floor of the building from above, shown with the *gray circles*. Mobile hand-held readers took signal measurements from the routers at each $(x,y)$ position with differing angles of orientation relative to the grid in $45^{\circ}$ increments. The hand-held reader was able to differentiate the signals by the MAC address of the router. 
+
+These known position measurements functioned as a type of training set, and another data set was used as a type of test set for the model to predict unknown locations, as pictured in Figure 2.1 by *black dots*. Predictions will be made by using the signal strengths from the unknown position and finding the closest known $(x,y)$ coordinate in signal strength. The principle is to treat the strength of a signal, or relative difference in signals, as a type distance metric. If a known $(x,y)$ position has similar WIFI strengths to an unknown signal the difference between the two signals would be small, indicating proximity. The choice of how many known $(x,y)$ signal strength values to use for prediction is where the parallel to k-Nearest Neighbors exists. 
+
+The initial dataset used for this exercise contained signals from several WIFI routers, as previously mentioned. The exercise in the book identified the top 7 MAC addresses then eliminated signal strength data from one of these routers and used only signal data from 6 routers (the black squares in Figure 2.1) for prediction. The model used the signal strengths from the unknown data, identified the $(x,y)$ coordinates of closest k-nearest neighbors, then calculated the predicted $(x,y)$ coordinates by taking a simple mean of the positional $(x,y)$ coordinates of these top k-nearest neighbors.
+
+## Questions of Interest
+
+Methods used for data analysis in the book exercise raised questions about the predictions. The intent of this case study is to answer these questions about the number of routers used in model building and the mean used to create predictionns. 
+
+The first set of questions is with regard to the WIFI routers used for predicting the new $(x,y)$ coordinates. Was the choice made to eliminate one of the routers the correct decision? Was the correct router eliminated to generate the most accurate predictions? Could a more accurate prediction be made with a different set of routers? 
+
+The second question answered in this case study is determining if the method to derive the nearest neighbors was the most accurate method? As stated above, the new $(x,y)$ coordinate predictions were made by taking the mean of the known k-nearest $(x,y)$s. Was this method sound, or would implementing a weighted mean to calculate predictions yield a more useful model?
+
+The methods used to answer these questions and the results of this analysis will be outlined in subsequent sections.
+
+# Methods
+
+Several methods employed in this case study were done at the direct guidance of the book and many of the functions used were written with code given in the book. The accompanying code for the methods used can be found in the <a href="#functions"> Functions Section</a> of the Appendix. There was little independent exploratory data analysis of the raw data, rather the guidance of the book was followed regarding EDA of the dataset. 
+
+This exercise uses the clustering technique of K-Nearest Neighbors (KNN) method to associate a MAC signal with a location. The distance considered closest in this KNN function is based on the signal strength of MAC addresses detected. Within this study's clustering of KNN there will be 3 variations: All In, Leave One Out, Weighted Strengths. The estimated success will be measured using 5-fold cross validation. Each fold will test k values of 1 to 20 to determine the appropriate number of nearby points to estimate. 
+
+ 
+## Data Cleanup
+The data format given were text logs from hand scanner that gave individual scanner information along with a timestamp and the surrounding devices' MAC addresses and signal strengths. This raw data needed processing prior to analysis. Several functions were written to read, extract and transform the data into a useful format. The primary function used to load and transform the data was `readData()` (<a href="#function621">Function 6.2.1</a>) which had several helper functions `processLine()`; `subMacs()` ; `roundOrientation()`.
+
+#### Raw data example
+```{text eval=FALSE}
+[1] "t=1139643118358"  
+[2] "id=00:02:2D:21:0F:33"  
+[3] "pos=0.0,0.0,0.0"  
+[4] "degree=0.0"  
+[5] "00:14:bf:b1:97:8a=-38,2437000000,3"  
+[6] "00:14:bf:b1:97:90=-56,2427000000,3"  
+[7] "00:0f:a3:39:e1:c0=-53,2462000000,3"  
+[8] "00:14:bf:b1:97:8d=-65,2442000000,3"  
+[9] "00:14:bf:b1:97:81=-65,2422000000,3"  
+[10] "00:14:bf:3b:c7:c6=-66,2432000000,3"  
+[11] "00:0f:a3:39:dd:cd=-75,2412000000,3"  
+[12] "00:0f:a3:39:e0:4b=-78,2462000000,3"  
+[13] "00:0f:a3:39:e2:10=-87,2437000000,3"  
+[14] "02:64:fb:68:52:e6=-88,2447000000,1"  
+[15] "02:00:42:55:31:00=-84,2457000000,1"  
+
+Nolan, Deborah; Lang, Duncan Temple. Data Science in R: A Case Studies Approach to Computational Reasoning and Problem Solving (Chapman & Hall/CRC The R Series) (p. 8). CRC Press. Kindle Edition. 
+```
+
+To clean the raw data the `processLine()` (<a href="#function622">Function 6.2.2</a>) was passed each line,and key fields pulled from the lines:  "pos_x", "pos_y", "pos_z" - the "(x,y,z)" position of the scanner, "orientation" - the angle of a given reading, "mac" - the MAC address of the device being scanned, and "signal" - the strength of the signal from the device being scanned.
+
+Not all fields were required for measuring strength and distance. These fields were dropped while processing the raw data: "time" - the time of the measurement, "scanMac" - the MAC address of the scanning device, and "channel" - the channel of the device.  The "type" of measurement this data comes from was used to filter out any "Ad Hoc" measurements, then dropped. 
+
+The MAC addresses "00:0f:a3:39:e1:c0" and "00:0f:a3:39:dd:cd" will each be removed from certain models. This was filtered within the `subMacs()` function  (<a href="#function623">Function 6.2.3</a>). These two results were compared to determine if the MACs are at the same position and only one should be taken into account for our model.
+    
+The orientation of each reading were divided into 45 degree buckets along the $(x,y)$ axes. This was accomplished with the `roundOrientation()` function  (<a href="#function624">Function 6.2.4</a>). The mapping used was of a top down plane with scanners being on the same floor of a building. All values were zero, and so "pos_z" was eliminated. Lastly, the training data has a some summary statistics features added, the mean and median signal, grouped by the $(x, y)$ position, the angle and MAC address. This is accomplished with the `compute_signal_stats(df)`  (<a href="#function625">Function 6.2.5</a>) , this function could be modified to include more statistics.
+
+Below is an example of the resulting data frame once the above data cleaning steps are complete.
+
+```{r echo=FALSE, fig.cap= "**Figure 3.1** *Cleaned training set example with summary statistics for (x, y)*"}
+# Code won't show just the print
+# This will display the head of the data, pander will make the printing look good in html
+
+df_trn2 <- readData("data/offline.final.trace.txt")
+
+df_trn <- compute_signal_stats(df_trn2)
+
+head(df_trn) %>%
+  kbl(digits = 2, row.names = F) %>%
+  kable_material(c("striped", "hover", "condensed") )%>%
+  scroll_box(width = "100%", height = "200px")
+
+# paged_table(df_trn)
+```
+
+
+A second function that is critical in making predictions with this model is `summ_signal_data()`  (<a href="#function626">Function 6.2.6</a>) . This function computes the mean signal for the individual MAC addresses across the same $(x, y)$ locations. The measurement from each location at every angle for the MAC addresses will be put into columns labeled with the MAC id and the corresponding $(x,y)$ position. Below is an example:
+
+
+```{r echo=FALSE, fig.cap= "**Figure 3.2** *Summarized statistics for each MAC at each (x, y) location*"}
+# Code won't show just the print
+# This will display the head of the data, pander will make the printing look good in html
+# paged_table(summ_signal_data(df_trn, "signal", c("pos_xy", "pos_x", "pos_y", "orientation", "angle")))
+
+head(summ_signal_data(df_trn2, "signal", c("pos_xy", "pos_x", "pos_y", "orientation", "angle"))) %>%
+  kbl(digits = 2, row.names = F) %>%
+  kable_material(c("striped", "hover", "condensed")) %>%
+  scroll_box(width = "100%", height = "200px")
+
+```
+
+## Finding k-Nearest Neighbors
+
+With data in the formats above, the model tuning can commence. The first data frame served as our "training" data, and the format of the second data frame will be what is required for the "test" dataset. However, our test dataset had the $(x, y)$ locations removed, as we used it to evaluate prediction.  
+
+Finding the k-nearest $(x, y)$ locations with regard to signal strength and generating predictions is accomplished by the `xy_pred()`  (<a href="#function627">Function 6.2.7</a>); which also has several helper functions `m_angles()`;`find_nn()`; `xy_dist_weight()`. The `xy_pred()` function was passed the signal strengths of the unknown locations, the angles of the unknown location as found by converting the orientation feature in the raw data frame to angle with `roundOrientation()`, the "training" dataset, the desired (m) number of measurement angles from the test dataset to use, the k number of $(x, y)$ location neighbors, and the desired means of calculation. The last parameter allowed the computation of finding the nearest neighbor with a weighted mean strategy. 
+
+
+The `m_angles()` function (<a href="#function628">Function 6.2.8</a>)  was used to select the correct training set angles to include in analysis. The number of angles through analysis was kept consistent at $m = 3$. The objectives of the case study did not include tuning this parameter, and the book exercise mostly kept $m = 3$. 
+
+
+The `find_nn()` method  (<a href="#function629">Function 6.2.9</a>)  employed Euclidean distance to find the nearest locations with the following formula, treating WIFI signal strength as a means of distance, where $i$ is the number of MAC ids included in analysis.
+
+
+$$distance = \sqrt{(S_{1}^{*} - S_{1})^2 + ... +  (S_{i}^{*} - S_{i})^2}$$
+
+
+The final helper function `xy_dist_weight()`  (<a href="#function6210">Function 6.2.10</a>)  allowed a different means by which to calculate the prediction for the new $(x, y)$ location. The exercise in the book initially took a simple mean of the $(x, y)$s of the k-nearest locations. This function allowed the investigation into a core question of interest: does a weighted mean strategy yield more accurate results. The weighted mean was calculated using guidance from the text book for the function below for the weights for the k-nearest locations. $d_i$ is the magnitude of the signal strength.
+
+
+$$weight = \displaystyle \frac{\displaystyle \frac{1}{d_i}}{\Sigma_{i = 1}^{k} \displaystyle \frac{1}{d_i}}$$
+
+To assess the accuracy of the candidate and final models, the `calc_error()` function  (<a href="#function6211">Function 6.2.11</a>) facilitated this calculation by summing the squared difference of the predicted $(x, y)$ locations with the true locations.
+
+## Cross Validation
+
+To select the final model, 5 fold cross validation were run on the training, or "offline", file. All of the above functions to find nearest neighbors, generate, and assess predictions were compiled into a function for cross validation. This function allowed the means to assess the models for the case study question of interest. One scenario used the top 7 MAC addresses, another had the MAC id "00:0f:a3:39:e1:c0" removed from analysis, as the book exercise and the final scenario had "00:0f:a3:39:dd:cd" removed. This cross validation function was used to assess whether the correct decision was made to eliminate the first MAC address, additionally the weighted mean and simple mean scores were calculated to assess which might be more indicative of a useful model.
+
+The `cross_val_training()` function  (<a href="#function6212">Function 6.2.12</a>) performed 5-fold validation, calculating $(x, y)$ predictions with mean and weighted mean from values of k = 1 to 20. This was performed to identify a suitable model, without over-fitting to the given testing data, or "online" file. The results of each round of cross validation for each fold were written to a csv for later analysis.
+
+## Final Model Selection
+
+Once the ideal parameters were found via cross validation, the selected parameters were used in the `final_model_prediction()` function  (<a href="#function6213">Function 6.2.13</a>) which predicted on the testing set, the "online" file, and then returned the results scored with the `calc_error()` function.
+
+# Results
+
+## Cross Validation
+
+```{r echo=FALSE, message=FALSE}
+df_trn_results = read_csv("data/training_summary.csv")
+
+df_tr_summary = df_trn_results %>% 
+  group_by(macs_filtered, k) %>% 
+  summarize(mean_scores = mean(mean_score),
+            mean_score_sd = sd(mean_score),
+            mean_wgt_scores = mean(wgt_mean_score),
+            mean_wgt_score_sd = sd(wgt_mean_score)
+  ) %>% 
+  mutate(mycolor = ifelse(macs_filtered == "00:0f:a3:39:e1:c0", "yes", "no"))
+
+```
+
+```{r echo=FALSE, fig.cap= "**Figure 4.1** *Raw data points from each round of cross validation (CV)*"}
+
+df_trn_results %>%
+  ggplot(aes(x = k, y = mean_score, color = macs_filtered)) +
+  geom_point() +
+  theme_minimal() +
+  scale_color_brewer(palette="Dark2") +
+  labs(title = "Prediction Scores from 5-fold CV of Training Data", x = "Value of k", y = "Score", color = "MAC address filtered")
+
+```
+
+Figure 4.1 above shows the raw scores for each round of cross validation over the 5 folds for values of k = 1 to 20. It is plain to see that at greater numbers of k, the prediction accuracy suffers. Another point that was noticed was the relative variability around k = 1, and it can been seen that there are some of the lowest accuracy score measure for the entire validation run.
+
+***
+
+```{r echo=FALSE, fig.cap= "**Figure 4.2** *The mean compiled data from cross validation (CV)*"}
+df_tr_summary %>%
+  ggplot(aes(x = k, y = mean_scores, color = macs_filtered)) +
+  geom_point()+
+  geom_line() + 
+  theme_minimal() +
+  scale_color_brewer(palette="Dark2") +
+  labs(title = "Mean Scores from 5-fold Cross Validation", x = "Value of k", y = "Mean Score", color = "MAC address filtered")
+
+```
+
+Figure 4.2 the mean score calculated for each MAC address combination for the same value of k across the five cross validation folds. The same trends seen in the raw data plot can be witnessed in this plot. As the value of k increase, the accuracy score for the predictions of $(x, y)$ suffer greatly. From this plot, a general sense of how many nearest neighboring points to be used in calculation for the most useful model can start to be seen. 
+
+Figure 4.2 also does seem to yield preliminary answer a key questions of interest for this case study. The example in the book chose to eliminate MAC "00:0f:a3:39:dd:cd" and keep MAC "00:0f:a3:39:e1:c0" for use in nearest neighbor predictions. The evidence above eludes to the fact that this was likely the wrong decision. Oddly enough, the prediction seems much worse without the MAC "00:0f:a3:39:dd:cd", even when the top 7 addresses were used. From this visualization we can see that the best values occur at lower values of k.
+
+## Evaluating the options of $k$
+
+```{r fig.height=8, fig.width=8, echo=FALSE, , fig.cap= "**Figure 4.3** *The top plot is a boxplot for the mean scores at these values of k. The bottom plot depicts the same data as a violin plot.*"}
+result_box <- df_trn_results[which((df_trn_results$k == 2 | df_trn_results$k == 3)),] %>%
+  ggplot(aes(x = as.factor(k), y = mean_score, fill = macs_filtered)) +
+  geom_boxplot() + 
+  theme_minimal() +
+  scale_fill_brewer(palette="Dark2") +
+  labs(title = "Mean Scores from 5-fold CV of Training Data, k = 2 and 3", x = "Value of k", y = "Mean Score", color = "MAC address filtered")
+
+result_violin <- df_trn_results[which((df_trn_results$k == 2 | df_trn_results$k == 3)),] %>%
+  ggplot(aes(x = as.factor(k), y = mean_score, fill = macs_filtered)) +
+  geom_violin() + 
+  theme_minimal() +
+  scale_fill_brewer(palette="Dark2") +
+  labs(title = "Mean Scores from 5-fold CV of Training Data, k = 2 and 3", x = "Value of k", y = "Mean Score", color = "MAC address filtered")
+
+grid.arrange(result_box,
+             result_violin,
+             nrow = 2)
+
+
+```
+
+Figure 4.3 shows the distribution of the mean accuracy scores across the 5-folds of cross validation. This is being called to light as it pertains to the decision of the optimal value of k. If the absolute minimum mean accuracy score would be use to select the value of k, then this analysis points to an optimal value of k = 2. However, the reason for these plots is to point to the fact that there is little difference between the scores for k = 2 and k = 3, as the ranges of prediction scores for these 2 values of k overlap almost entirely. Due to the relative similarity between the accuracy scores of k = 2 or 3, it is likely better to side with an odd number for the value of k. If the value of k is odd, then there will not be a scenario in which a prediction could "tie". The same data is being represented in both plots in an attempt to show multiple views to highlight the distribution of prediction scores for the value. 
+
+## Evaluating MACs
+
+As for the decision based on the QOI regarding the elimination of a MAC address for the model. As stated earlier, it seems quite likely given the data, that the authors chose to eliminate the router that would lead to inaccurate predictions. The MAC address eliminated in the exercise only served to improve the accuracy of the model, even when it was included. Further onto this point, when all 7 MAC addresses are included, it seems like MAC "00:0f:a3:39:dd:cd" increases the variability of the predictions, as seen in Figure 4.3. The standard deviation of the mean cross validation accuracy scores was larger when the book MAC id was included. 
+
+It seems the most sound decision to create a consistent, useful, final model would be to set k = 3 and to filter out the MAC "00:0f:a3:39:dd:cd". Predictions with this MAC id included will be more variable, and/or less accurate, and will be excluded in final predictions. 
+
+## Evaluating Neighbor Strategy
+
+The other question of interest was whether the correct decision regarding the calculation of the prediction. The book exercise used the mean of the k-nearest $(x, y)$ positions. The question was raised that it might be more beneficial to use a weighted mean strategy to put a greater weight on the spatially closest points when calculating prediction? The plot below can shed some light on this question.
+
+
+```{r fig.height=7, fig.width=10, echo=FALSE, fig.cap= "**Figure 4.4** *This plot shows the mean prediction scores for models with the same value of $k$, but differing calculations for identifying the neighbors*"}
+
+df_subset <-  df_trn_results[which((df_trn_results$k == 3) & (df_trn_results$macs_filtered == "00:0f:a3:39:e1:c0")),]
+
+df_sb1 = df_trn_results[which((df_trn_results$k == 3) & (df_trn_results$macs_filtered == "00:0f:a3:39:e1:c0")),] %>%
+  ggplot(aes(x = k, y = mean_score, fill = macs_filtered)) +
+  geom_boxplot(fill = "#D95F02") + 
+  theme_minimal() +
+  #scale_fill_brewer(palette="Dark2") +
+  labs(title = "Mean Score of Training Data, k = 3", x = "Value of k", y = "Mean Score", fill = "MAC address filtered") 
+
+df_sb2 = df_trn_results[which((df_trn_results$k == 3) & (df_trn_results$macs_filtered == "00:0f:a3:39:e1:c0")),] %>%
+  ggplot(aes(x = k, y = wgt_mean_score)) +
+  geom_boxplot(fill = "#D95F02") + 
+  theme_minimal() +
+  #scale_fill_brewer(palette="Dark2") +
+  labs(title = "Weighted Mean Scores of Training Data, k = 3", x = "Value of k", y = "Weighted Mean Score", fill = "MAC address filtered")
+
+grid.arrange(df_sb1,
+             df_sb2,
+             nrow = 1)
+```
+
+Figure 4.4 above shows the mean accuracy scores from the cross validation of the testing data at k = 3. This shows that there is little difference is the overall mean prediction score between the two scenarios. The nominal value for the weighted mean is ever so slightly less with the way the weights have been calculated. There doesn't seem to be a great deal of difference to be had from a prediction stand point by evaluating this metric now. These two values are very close to one another, and using either will likely yield an equally accurate model. 
+
+One reason that these values lie so close to one another, especially with k = 3, seems to be with the values of the signal strengths from the MAC addresses. During the course of the case study, it was noticed that typically the top k closest MAC addresses had values that were very close to one another nominally. Some cases there was a difference of $< 1$ when the value of the signal strength were in the 50s or 60s, making the differences between the values orders of magnitude less than the measurement. Due to this fact, the weights that were used for calculation would be very close to one another, e.g. 0.33, 0.32, 0.34. Especially at our chosen value of k, there was little difference seen. A better judge for this decision may be after the final prediction scores on the test set. 
+
+## Final Model Design
+
+Below are the results of the prediction scores from final tuned model. This model uses k = 3, m = 3 (angles), and MAC "00:0f:a3:39:dd:cd" filtered. This was tuned the training set and the values are on the top line named "Case Study Model". The same values of k and m were used to replicate the model in the book, with the same MAC removed, to compare to the final model. Due to the questions raised about whether to use the mean or the weighted mean to calculate the predictions, predictions with both methods were used to assess the efficacy.
+
+```{r echo=FALSE}
+# probably have to mess with some file paths to get this function to work correctly
+
+df_final <- final_model_prediction()
+
+df_final %>%
+  kbl(digits = 2, row.names = F, col.names = c("Model", "MAC Filtered", "Mean Score", "Weighted Mean Score")) %>%
+  kable_material(c("striped", "hover", "condensed"))
+
+#              model     macs_filtered mean_score wgt_mean_score
+# 1 Case Study Model 00:0f:a3:39:e1:c0   270.4581       270.5955
+# 2       Book Model 00:0f:a3:39:dd:cd   306.7025       306.0932
+
+```
+
+The model which scored the best on the hold out testing data set, the "online" file, used the simple mean to select neighbors. It might still be useful to use the weighted mean if this model were to be put into production, though, with these results it's not clear whether it is worth the extra effort, especially at these values of k.
+
+# Conclusion
+
+This Case Study set out with two major questions of interest; Did the exercise in the book make the correct decision with the elimination of the MAC address? Will implementing a weighted mean to calculate predictions give a more accurate model?
+
+With regard to the first question, it seems that the incorrect decision was made in the book, and a very useful MAC address was eliminated. When including the left out MAC address, the predictions improved with better, less variable accuracy scores; if the MAC the book used is left in for analysis, the results may be better with regard to accuracy, but might not consistently yield results that are as accurate.
+
+Using the weighted mean strategy for k-nearest neighbors selection did not significantly improve the prediction accuracy. From the final model prediction scores seen in the last chunk of the results, the tuned "Case Study" model using the simple mean method had a very slight advantage with a lower accuracy score. The "Book Model" however seems to have benefited, even slightly, from using the weighted mean. As stated before, there doesn't seem to be an advantage either way with these values of k, with regard to prediction accuracy. The weighted mean approach is more eloquent compared to taking a simple mean, so the functions had to be designed around this in mind. If re-building this system from scratch, it likely wouldn't be worth the extra effort to develop this feature. Not only does this take the extra time and effort in the design phase, it is possibly that it will take the functions to run longer, performing unnecessary calculations. So it could be said that using a weighted mean such as the one employed in this case study does not yield more accurate predictions.
+
+This was a very entertaining and challenging exercise. It was great to apply data science skills to a practical issue. If there were more time to analyze the data there were some questions raised during the Case Study that could be answered. One question is, What is the optimal number of angles(m) to use? This could easily be built into the cross-validation loop, however it wasn't a goal for this study. Another reason the optimal angles weren't tuned has to deal with the second question. 
+
+As stated in the methods section, much of the early, seed code used in the beginning of the project was taken from the text book. It doesn't seem like the authors developed this code for scaling necessarily, but rather for instruction. The code does a lot of single line processing, and it seemed like due to this, the cross validation of the training data took a several hours, which is why the results were written to a csv. This issue generated the second question, Can this be re-developed or tweaked to handle larger batches more quickly and efficiently? 
+
+
+# Appendix
+
+## Sources
+
+**Nolan, Deborah; Lang, Duncan Temple.**; *Data Science in R: A Case Studies Approach to Computational Reasoning and Problem Solving*; Chapter 1 pgs 3-40.
+
+<a id="functions"></a>
+
+## Functions
+
+<a id="function621"></a>
+
+### Read Data 
+
+```{r readData}
+# takes in the raw file and creates a datafrom of the variables contained therein
+# Optional parameter:
+#    rd_mac_to_filter can be given as a String with the MAC address to filter
+#          Default value of 'none' leaves all in
+readData = function(x, rd_mac_to_filter="none"){
+  rd_raw = readLines(x)
+  
+  rd_lines = rd_raw[substr(rd_raw, 1, 1) != "#"] # Strips comment lines
+  rd_tmp = lapply(rd_lines, processLine) # custom function call
+  
+  rd_df = as.data.frame(do.call("rbind", rd_tmp), stringsAsFactors = F)
+  
+  names(rd_df) = c(
+    "time", 
+    "scanMac", 
+    "pos_x", 
+    "pos_y", 
+    "pos_z",
+    "orientation", 
+    "mac",
+    "signal",
+    "channel",
+    "type"
+  )
+  
+  numVars = c(
+    "time", 
+    "pos_x", 
+    "pos_y", 
+    "pos_z",
+    "orientation", 
+    "signal"
+  )
+  
+  rd_df[numVars] = lapply(rd_df[numVars], as.numeric)
+  
+  # Filters out measurements made in Ad-hoc mode, per book
+  rd_df = rd_df[rd_df$type == "3", ]
+  
+  rd_df = rd_df[, "type" != names(rd_df)]
+  # dropping unneeded variables 
+  # scanMac - Only 1 unique value for all observations, dropped in book 
+  # pos_z - Routers are on an even plane we care about x/y floorplan distance
+  rd_df = rd_df[, !(names(rd_df) %in% c("scanMac", "pos_z"))]
+  # Creating a composite field of the position of given hub for categorization
+  rd_df$pos_xy = paste(rd_df$pos_x, rd_df$pos_y, sep = "-")
+  # Rounding our orientation angles to 45 degree buckets
+  rd_df$angle = roundOrientation(rd_df$orientation)
+  # subsetting the MAC addresses to the closest 7
+  rd_df = subMacs(rd_df, rd_mac_to_filter)
+
+  return(rd_df)
+}
+```
+
+Main function used for loading data. It accepts the file path to the data file, and an option argument if one wanted to filter one of the top 7 MAC addresses up front and returns a dataframe of the raw data. Uses helper functions `processLine(x)`; `subMacs(sm_x, sm_mac_to_filter="none")` ; `roundOrientation(angles)`
+
+
+<a id="function622"></a>
+
+### Process Line
+
+```{r processLine}
+# Processes each line of the raw file and pulls out our variables into a matrix
+processLine = function(x){
+  pl_tkns <- strsplit(x, "[;=,]")[[1]]
+  
+  if (length(pl_tkns) == 10)
+    return(NULL)
+  
+  pl_tmp = matrix(pl_tkns[-(1:10)], ncol = 4, byrow = T)
+  
+  cbind(matrix(pl_tkns[c(2,4,6:8,10)], nrow = nrow(pl_tmp), ncol = 6, byrow = T), pl_tmp) 
+}
+```
+
+Helper function for `readData(x, rd_mac_to_filter="none")`. This will accept a single line of data from the raw file and split on specific characters to create a single line for the processed data frame.
+
+<a id="function623"></a>
+
+### Filter MAC Addresses
+
+```{r subMacs}
+# subsetting the MAC addresses to only the closest 7
+# Optional parameter:
+#    sm_mac_to_filter can be given as a String with the MAC address to filter
+#          Default value of 'none' leaves all in
+subMacs = function(sm_x, sm_mac_to_filter="none"){
+  
+  sbMc = names(sort(table(sm_x$mac), decreasing = T))[1:7]
+  
+  sm_x = sm_x[sm_x$mac %in% sbMc, ]
+  
+  if(sm_mac_to_filter != "none"){
+    sm_x = sm_x %>% filter(mac != sm_mac_to_filter)
+  }
+  
+  return(sm_x)
+}
+```
+
+Helper function for `readData(x, rd_mac_to_filter="none")`. This function accepts a dataframe from a processed data file, it sorts by the top 7 MAC addresses, and if passed a specific MAC address from the top 7 as a string, it will filter all the data points corresponding to that MAC. This function was created to help filter out the desired MACs in the analysis.
+
+
+<a id="function624"></a>
+
+### Round Orientation
+
+```{r roundOrientation}
+# we want to limit bucket the angles by 45 angle increments
+roundOrientation = function(angles){  
+  refs = seq(0, by = 45, length = 9)  
+  q = sapply(angles, function(o) which.min(abs(o - refs)))  
+  c(refs[1:8], 0)[q]  
+}
+```
+
+Helper function for `readData(x, rd_mac_to_filter="none")`. This function gets passed the orientation attribute from a record of the processed data frame to return an angles in 45 angle increments. Creates angle column in dataframe.
+
+<a id="function625"></a>
+
+
+### MAC Summary Statistics
+
+```{r compute_signal_stats}
+# Computing the mean and median signal strength across mac addresses
+compute_signal_stats = function(css_df) {
+  css_byLoc = with(css_df,
+                   by(css_df, list(pos_xy, angle, mac),
+                      function(x) x))
+  css_df_sigSum =  lapply(css_byLoc,
+                          function(oneLoc) {
+                            ans = oneLoc[1,]
+                            ans$avgSignal = mean(oneLoc$signal)
+                            ans$medSignal = median(oneLoc$signal)
+                            ans})
+  
+  css_df_final = do.call("rbind", css_df_sigSum)
+  
+  return(css_df_final)
+}
+```
+
+This function will be passed as data frame in the format given by `readData(x)`; the angle feature is required to compute stats. 
+
+<a id="function626"></a>
+
+### Summarize Signal Data
+
+```{r summ_signal_data}
+# getting the average signal strength for MAC addresses  in comparison to each xy position
+summ_signal_data = function(data, varSignal = "signal", keepVars = c("pos_xy", "pos_x", "pos_y")) {
+  byLocation =  with(data, by(data, list(pos_xy),
+                              function(x) {
+                                ans = x[1, keepVars]
+                                avgSS = tapply(x[, varSignal], x$mac, mean)
+                                #taking the unique macs and creating columns from them
+                                y = matrix(avgSS, nrow = 1, ncol = length(unique(data$mac)),
+                                           dimnames = list(ans$pos_xy,
+                                                           names(avgSS)))
+                                cbind(ans, y)
+                              }))
+  newDataSS = do.call("rbind", byLocation)
+  return(newDataSS)
+}
+```
+
+The above function will take a data frame that has been processed by the `readData(x, rd_mac_to_filter="none")` function, and compute the mean signal strengths for the individual MAC addresses.
+
+
+<a id="function627"></a>
+
+### Predict (x,y) Location
+
+```{r xy_pred}
+#predict the position of the new observation by ranking other signal strengths by distance
+# then taking the mean of those positions to predict the distance of our new observations
+# Optional parameter:
+#    xp_nn_wgt can be given to change how the mean is calculated,
+#        'mean' (Default) will calculate the simple mean of k nearest neighbors
+#        'weighted_mean' will calculate the weighted mean based signal strength similarity
+xy_pred = function(xp_new_sigs, xp_new_angs, xp_trn_df, xp_num_angs = 1, xp_k = 3, xp_nn_wgt='mean'){
+  xp_close_xy = list(length = nrow(xp_new_sigs))
+  
+  for (i in 1:nrow(xp_new_sigs)){
+    #create our angle set for each observation
+    xp_trn_ss = m_angles(xp_new_angs[i], xp_trn_df, m = xp_num_angs)
+    #create the distance ranked closest in signal strength to new observation
+    xp_close_xy[[i]] = find_nn(new_sig = as.numeric(xp_new_sigs[i, ]), xp_trn_ss)
+  }
+  # get the newly estimated location based on the mean of the nearest neighbors ranked above
+  xp_xy_est = lapply(
+    xp_close_xy, 
+    function(x) xy_dist_weight(x, xp_k, xp_nn_wgt)
+    )
+  xp_xy_est = do.call("rbind", xp_xy_est)
+  return(xp_xy_est)
+}
+
+```
+
+The above function will be passed the dataframe with the new signals, new angles from test set as found by `roundOrientation()`, the training set in the format from `readData()` with computed MAC summary stats found with `compute_signal_stats()`, the $m$ number of angles, the desired $k$ neighbors, and the desired means of calculations to find the nearest neighbor, either `"mean"` or `weighted_mean`
+
+<a id="function628"></a>
+
+### Select the (m) Number of Angles
+
+```{r m_angles}
+# given a new observations and current signals, create a summary table of average signal strength
+m_angles = function(angleNewObs, signals, m) {
+  #TODO: I don't see this being used, I think it can be deleted
+  refs = seq(0, by = 45, length = 8) 
+  #get the nearest 45 degree angle from our new observation
+  nearestAngle = roundOrientation(angleNewObs)  
+  #when m is odd we don't need to manipulate the sequence of 45 degree angles
+  if (m %% 2 == 1) {  
+    angles = seq(-45 * (m - 1) /2, 45 * (m - 1) /2, length = m)  
+  } else {
+    #when it is even we need to add one to m
+    m = m + 1
+    angles = seq(-45 * (m - 1) /2, 45 * (m - 1) /2, length = m)
+    #then remove the added angle based on if we're rounding up the angle
+    if (sign(angleNewObs - nearestAngle) > -1)
+      angles = angles[ -1]
+    else
+      angles = angles[ -m]  
+  }
+  #combine our sequence and the nearest rounded angle
+  angles = angles + nearestAngle
+  #clean up angles outside of the 0-360 range
+  angles[angles < 0] = angles[ angles < 0] + 360
+  angles[angles > 360] = angles[ angles > 360] - 360
+  #find our singals that fall within angle range
+  signal_subset =  signals[signals$angle %in% angles,]
+  #create our summary table from this subset's average signal strength
+  trainSS = summ_signal_data(signal_subset, varSignal = "avgSignal")
+}
+```
+
+The above function accepts the training dataframe, then finds the $m$ number of angles to use to find the k-nearest $(x, y)$ locations. This case study kept $m = 3$ consistent throughout analysis.
+
+<a id="function629"></a>
+
+
+### Find k-Nearest Neighbors
+
+```{r find_nn}
+# finding the closest MACs based on similar signal strength
+find_nn = function(new_sig, trnSubset){
+  nmax = dim(trnSubset)[2]
+  #get the differences in signal between all positions 
+  dif = apply(trnSubset[,4:nmax], 1, function(x) x - new_sig)
+  dists = apply(dif, 2, function(x) sqrt(sum(x^2)))
+  # order the distance to grab the closest in strength in dataset
+  closest = order(dists)
+  return(trnSubset[closest, ])
+}
+```
+
+This function will be passed the signal strengths for a single prediction, and return the $(x, y)$ location, with the signal strength from each MAC address. This signal strength metric will be used as a distance metric.
+
+
+
+<a id="function6210"></a>
+
+### (x, y) Distance Weight
+
+```{r xy_dist_weight}
+xy_dist_weight = function(x, n, wgt = 'mean') {
+  val = 0
+  if (wgt == 'mean'){
+    val = sapply(x[,2:3], function(x) mean(x[1:n]))
+  }else if(wgt == 'weighted_mean'){
+    divisor = 0
+    wgts = c()
+    n_col_slct = dim(x)[2]
+    for (i in 1:n) {
+      divisor = divisor + (1/rowMeans(subset(x[i,], select = c(4:n_col_slct))))
+    }
+    for (j in 1:n) {
+      wgts = append(wgts, (1/rowMeans(subset(x[j,], select = c(4:n_col_slct))) / divisor)) 
+    }
+    for (k in 1:n) {
+      val = val + sapply(x[k,2:3], function(x) (x * wgts[k]))
+    }
+  }
+  return(val)
+}
+```
+
+The above function will calculate and return the $(x, y)$ location prediction by either averaging the $(x, y)$ coordinates of the k-nearest neighbors or calculating a weighted average with the k-nearest. 
+
+
+<a id="function6211"></a>
+
+### Calculate Prediction Error
+
+```{r calc_error}
+#take the sum squared error between predicted and true values
+calc_error = function(ce_est_xy, ce_true_xy){
+  sum(rowSums((ce_est_xy - ce_true_xy)^2))
+}
+```
+
+This function will calculate the prediction error by summing the squared difference between the predicted location and the true location.
+
+<a id="function6212"></a>
+
+
+### Cross Validate Training Data
+
+```{r cross_val_training}
+cross_val_training = function(){
+  df_trn_all_mac = readData("caseStudy2_Clustering/data/offline.final.trace.txt")
+  
+  macs_filter_config = c("none", "00:0f:a3:39:e1:c0", "00:0f:a3:39:dd:cd")
+  
+  f_folds = 5
+  
+  df_cv_results <- data.frame(f=integer(),
+                              k = integer(),
+                              macs_filtered=character(), 
+                              mean_score=double(), 
+                              wgt_mean_score=double(),
+                              stringsAsFactors=FALSE)
+  
+  for (j in 1:length(macs_filter_config)) {
+    df_mac_filtered = subMacs(df_trn_all_mac, macs_filter_config[j])
+    
+    set.seed(2)
+    #Randomly shuffle the data
+    df_mac_filtered = df_mac_filtered[sample(nrow(df_mac_filtered)),]
+    
+    #Create f equally size folds
+    cv_folds = cut(seq(1,nrow(df_mac_filtered)),breaks=f_folds,labels=FALSE)
+    
+    #Perform f fold cross validation
+    for(f in 1:f_folds){
+      #Segment your data by fold using the which() function 
+      test_idx = which(cv_folds==f,arr.ind=TRUE)
+      test_data = df_mac_filtered[test_idx, ]
+      train_data = compute_signal_stats(df_mac_filtered[-test_idx, ])
+      
+      #creating our MAC average signal strength for each position dataframe
+      cv_test_summary = summ_signal_data(test_data, "signal", c("pos_xy", "pos_x", "pos_y", "orientation", "angle"))
+      
+      #modifying our subset based on filtering out MAC addresses
+      cv_x = ifelse((macs_filter_config[j] != "none"), 11, 12)
+      
+      cv_test_macs = cv_test_summary[, c(6:cv_x)]
+      # angle is 4th col
+      cv_test_angles = cv_test_summary[, 4]
+      #save off our true values to compare
+      cv_true_macs = cv_test_summary[, c("pos_x", "pos_y")]
+      # for each fold iterate through all 1-20 k values
+      for (k in 1:20){#:20) {
+        cv_est_k = xy_pred(cv_test_macs, 
+                           cv_test_angles,
+                           train_data, #%>% filter(mac != "00:0f:a3:39:dd:cd"),
+                           3,k)
+        #calculating both the plain and weighted means for each run
+        cv_est_k_wt = xy_pred(cv_test_macs, 
+                              cv_test_angles,
+                              train_data, #%>% filter(mac != "00:0f:a3:39:dd:cd"),
+                              3,k, "weighted_mean")
+        #get sum squared error for both mean and weighted mean
+        cv_scores = sapply(list(cv_est_k, cv_est_k_wt), calc_error, cv_true_macs)
+        #store in dataframe
+        df_cv_results[nrow(df_cv_results)+1, ] = list(f, k, macs_filter_config[j], cv_scores[1], cv_scores[2])
+        #show progress through loops
+        print(tail(df_cv_results, 1))
+      }
+    }
+  }
+  #saving the output of run for later use
+  write_csv(df_cv_results, path = "caseStudy2_Clustering/data/training_summary.csv")
+}
+```
+
+The above function will train the model. It compiles all of the functions required to generate and score predictions, and the results will be written to a dataframe, saved as a csv for later analysis.
+
+
+<a id="function6213"></a>
+
+### Final Model Prediciton
+
+```{r final_model_prediction}
+final_model_prediction = function(){
+  
+  #~~~~ Final test run after analysis of results
+  
+  fm_df_results <- data.frame(Model = character(),
+                              MAC_filtered=character(), 
+                              mean_score=double(), 
+                              wgt_mean_score=double(),
+                              stringsAsFactors=FALSE)
+  
+  fm_df_trn_full = readData("caseStudy2_Clustering/data/offline.final.trace.txt")
+  
+  fm_df_tst_full = readData("caseStudy2_Clustering/data/online.final.trace.txt")
+  
+  fm_macs_filter = c("00:0f:a3:39:e1:c0", "00:0f:a3:39:dd:cd")
+  
+  fm_mac_name = c("Case Study Model", "Book Model")
+  
+  for (j in 1:length(fm_macs_filter)) {
+    
+    df_trn_mac_filtered = subMacs(fm_df_trn_full, fm_macs_filter[j])
+    
+    df_tst_mac_filtered = subMacs(fm_df_tst_full, fm_macs_filter[j])
+    
+    fm_train_data = compute_signal_stats(df_trn_mac_filtered)
+    
+    #creating our MAC average signal strength for each position dataframe
+    fm_test_summary = summ_signal_data(df_tst_mac_filtered, "signal", c("pos_xy", "pos_x", "pos_y", "orientation", "angle"))
+    
+    fm_test_macs = fm_test_summary[, c(6:11)]
+    
+    # angle is 4th col
+    fm_test_angles = fm_test_summary[, 4]
+    
+    #save off our true values to compare
+    fm_true_macs = fm_test_summary[, c("pos_x", "pos_y")]
+    
+    
+    fm_est_k = xy_pred(fm_test_macs, 
+                       fm_test_angles,
+                       fm_train_data, 
+                       3,3)
+    
+    #calculating both the plain and weighted means for each run
+    fm_est_k_wt = xy_pred(fm_test_macs, 
+                          fm_test_angles,
+                          fm_train_data, 
+                          3,3, "weighted_mean")
+    
+    #get sum squared error for both mean and weighted mean
+    fm_scores = sapply(list(fm_est_k, fm_est_k_wt), calc_error, fm_true_macs)
+    
+    #store in dataframe
+    fm_df_results[nrow(fm_df_results)+1, ] = list(fm_mac_name[j], fm_macs_filter[j], fm_scores[1], fm_scores[2])
+  }
+  return(fm_df_results)
+}
+```
+
+
+The above function will generate the final predictions of the model and return a dataframe with results.
