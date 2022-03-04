@@ -1,15 +1,13 @@
 
 # Background
 
-This is a case study I completed as part of my master's program. It can be run if the data is unzipped and the correct packages are installed. The Rmd can be knit into this HTML, or the html can be viewed directly. Below is an excerpt from the report outlining the purpose. 
+This is a case study I completed as part of my master's program. It can be run if the data is unzipped and the correct packages are installed. The Rmd can be knit into this HTML, or the html can be viewed directly. Below is an excerpt from the report outlining the purpose, the referenced Figure 2.1 below is referring to is the image included in this repo. 
 
 Enjoy!
 
 ## Case Study Purpose
 
 This case study is a re-evaluation and extension of an exercise covered in the first chapter of "Data Science in R: A Case Studies Approach to Computational Reasoning and Problem Solving" titled *Predicting Location via Indoor Positioning Systems*. The exercise evaluates an RTLS that will use the signal strengths from routers to predict the position of an asset on the floor of a building using a dataset collected by researchers at the University of Mannheim. A more detailed explanation of the study can be found in the textbook however the basic design will be synopsized. 
-
-![**Figure 2.1** from Nolan, Lang. pg 5  *Showing access points as black squares, collection points for offline/training data as grey dots, and online/testing set recordings as black dots.*](Fig1-1.PNG)
 
 WIFI routers were placed at access points in a building, and a mobile hand-held reader was used to measure the signal from these routers at fixed locations. Figure 2.1 shows the floor plan and shows an example of some of the locations for the routers, denoted by the *black squares*. A 1 meter grid was measured and the locations were denoted with $(x,y)$ coordinates as though looking down at the floor of the building from above, shown with the *gray circles*. Mobile hand-held readers took signal measurements from the routers at each $(x,y)$ position with differing angles of orientation relative to the grid in $45^{\circ}$ increments. The hand-held reader was able to differentiate the signals by the MAC address of the router. 
 
